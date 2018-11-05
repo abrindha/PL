@@ -807,8 +807,8 @@ let main () = begin
 	 let ctx = Z3.mk_context [( "model", "true" )] in
 	 let int_sort = (Z3Int.mk_sort ctx ) in
 	 let array_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
-	 let a1 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a1") array_sort in 
-	 let a2 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a2") array_sort in 
+	 let a1 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a1") int_sort int_sort in 
+	 let a2 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a2") int_sort int_sort in 
 
 	 let i1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i1")  in 
 	 let i2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i2")  in 
@@ -818,11 +818,31 @@ let main () = begin
 	 let v2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v2")  in 
 
 	 let st1 = Z3Arr.mk_store ctx a1 i1 v1 in 
-	 let st2 = Z3Arr.mk_store ctx a2 i2 v2 in 
+	 let st2 = Z3Arr.mk_store ctx a2 i2 v2 in
+
+	 let sel1 = Z3Arr.mk_select ctx a1 i3 in 
+	 let sel2 = Z3Arr.mk_select ctx a2 i3 in
+
+	 let antecedent = Z3Bool.mk_eq ctx st1 st2 in 
+
+	  (* create consequent: i1 = i3 or  i2 = i3 or select(a1, i3) = select(a2, i3) *)
+    let ds = [|
+        Z3Bool.mk_eq ctx i1 i3;
+        Z3Bool.mk_eq ctx i2 i3;
+        Z3Bool.mk_eq ctx sel1 sel2;
+      |] in
 
 	  print_string "Here";
 
- 
+	let consequent  = Z3Bool.mk_or ctx ds in
+
+    (* prove store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2 = i3 or select(a1, i3) = select(a2, i3)) *)
+
+	(* START HERE*TODO*)
+    let thm         = Z3Bool.mk_implies ctx antecedent consequent in
+    printf "prove: store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2 = i3 or select(a1, i3) = select(a2, i3))\n";
+    printf "%s\n" (Z3.ast_to_string ctx thm);
+    prove ctx thm true; 
 
 (* Brindha 2**
   let usage   = "Usage: " ^ Sys.argv.(0) ^ " [options] filename" in
