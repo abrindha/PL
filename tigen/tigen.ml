@@ -38,7 +38,7 @@ module Z3Sym = Z3.Symbol
 module Z3Expr = Z3.Expr
 module Z3Arr = Z3.Z3Array
 
-let do_debug = ref true
+let do_debug = ref false
 
 (**********************************************************************
  * Path Enumeration
@@ -566,7 +566,7 @@ let solve_constraints
 	Z3Int.mk_mod ctx i1 i2 
     | BinOp(Lt,e1,e2,_) -> Z3Float.mk_lt ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Le,e1,e2,_) -> Z3Float.mk_leq ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Gt,e1,e2,_) -> (*print_endline "Inside gr th"; let c = Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) in Printf.printf "c: %s\n" (Z3.Expr.to_string c) ;*) Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Gt,e1,e2,_) -> Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Ge,e1,e2,_) -> Z3Float.mk_geq ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Eq,e1,e2,_) -> Z3Float.mk_eq ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Ne,e1,e2,_) -> 
@@ -806,78 +806,48 @@ y  print_string "Here";
 
 
 (* Brindha 2**
+  Z3.toggle_warning_messages true ;
+  let ctx = Z3.mk_context [( "model", "true" )] in
 
- (* Prove store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2
-     = i3 or select(a1, i3) = select(a2, i3)) *)
-	 Z3.toggle_warning_messages true ;
-	 let ctx = Z3.mk_context [( "model", "true" )] in
-	 let double_sort = (Z3Float.mk_sort_double ctx) in
-	 let int_sort = (Z3Int.mk_sort ctx ) in
-	 let array_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
-	 let a1 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a1") double_sort double_sort in 
-	 let a2 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a2") double_sort double_sort in 
+  let int_sort = (Z3Int.mk_sort ctx) in
+  let array_of_int_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
 
-	 let i1= (Z3Float.mk_const ctx (Z3Sym.mk_string ctx "i1") double_sort) in
-	 let v1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v1")  in 
-	 let forty_two = Z3Float.mk_numeral_f ctx 42.0 double_sort in
-	 let equality_constraint = Z3Float.mk_eq ctx i1 forty_two in
-	 let st1 = Z3Arr.mk_store ctx a1 i1 v1 in 
-	 let sel1 = Z3Arr.mk_select ctx a1 v1 in 
-	 let equality_constraint2 = Z3Float.mk_eq ctx sel1 forty_two in
-(*	 let i2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i2")  in 
-	 let i3 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i3")  in 
+  let a = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a") int_sort int_sort in
+  let zero  = Z3Int.mk_numeral_i ctx 0 in
+  let one   = Z3Int.mk_numeral_i ctx 1 in
+  let two   = Z3Int.mk_numeral_i ctx 2 in
+  let three = Z3Int.mk_numeral_i ctx 3 in
 
-	 let v1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v1")  in 
-	 let v2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v2")  in 
+  let a_at_index_0 = Z3Arr.mk_select ctx a zero in
+  let a_at_index_1 = Z3Arr.mk_select ctx a one in
+  let a_at_index_2 = Z3Arr.mk_select ctx a two in
+  let a_at_index_3 = Z3Arr.mk_select ctx a three in
 
-	 let st1 = Z3Arr.mk_store ctx a1 i1 v1 in 
-	 let st2 = Z3Arr.mk_store ctx a2 i2 v2 in
+  let c1 = Z3.Boolean.mk_eq ctx a_at_index_0 (Z3Int.mk_numeral_i ctx 99) in
+  let c2 = Z3.Boolean.mk_eq ctx a_at_index_1 (Z3Int.mk_numeral_i ctx 88) in
+  let c3 = Z3.Arithmetic.mk_gt ctx a_at_index_2 a_at_index_1 in
+  let c4 = Z3.Boolean.mk_eq ctx a_at_index_3 (Z3Int.mk_numeral_i ctx 77) in
 
-	 let sel1 = Z3Arr.mk_select ctx a1 i3 in 
-	 let sel2 = Z3Arr.mk_select ctx a2 i3 in
-
-	 let antecedent = Z3Bool.mk_eq ctx st1 st2 in 
-
-	  (* create consequent: i1 = i3 or  i2 = i3 or select(a1, i3) = select(a2, i3) *)
-    let ds = [|
-        Z3Bool.mk_eq ctx i1 i3;
-        Z3Bool.mk_eq ctx i2 i3;
-        Z3Bool.mk_eq ctx sel1 sel2;
-      |] in
-
-	  print_string "Here";
-
-	let consequent  = Z3Bool.mk_or ctx ds in
-
-    (* prove store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2 = i3 or select(a1, i3) = select(a2, i3)) *)
-
-	(* START HERE*TODO*)
-    let thm         = Z3Bool.mk_implies ctx antecedent consequent in
-    printf "prove: store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2 = i3 or select(a1, i3) = select(a2, i3))\n";
-*)
-
-let solver = (Z3.Solver.mk_solver ctx None) in
-
-  Z3.Solver.add solver [ equality_constraint2 ] ;
-
-  debug "solver: %s\n" (Z3.Solver.to_string solver);
-
+  let solver = (Z3.Solver.mk_solver ctx None) in
+  Z3.Solver.add solver [ c1;c2;c3;c4 ] ;
   if (Z3.Solver.check solver []) != Z3.Solver.SATISFIABLE then
     Printf.printf "Test FAILED.\n"
   else begin
     Printf.printf "Test passed.\n" ;
     match Z3.Solver.get_model solver with
     | Some(model) ->
-      List.iter (fun (name,ast) ->
-        match Z3.Model.get_const_interp_e model ast with
-        | Some(evaluated) ->
-          let evaluated = Z3Float.numeral_to_string evaluated in
-          Printf.printf "\t%s = %s\n" name evaluated
+      debug "******* MODEL\n%s\n" (Z3.Model.to_string model) ;
+      let funcdecls = Z3.Model.get_func_decls model in
+      List.iter (fun (func_decl) ->
+        match Z3.Model.get_func_interp model func_decl with
+        | Some(func_interp) ->
+          let evaluated_string = Z3.Model.FuncInterp.to_string func_interp in
+          Printf.printf "******* Model.FuncInterp\n%s\n" evaluated_string
         | _ -> failwith "unexpected"
-      ) [ ("i1", i1) ]
+      ) funcdecls
     | _ -> failwith "unexpected"
   end ;
-  
+ 
   
   *** Brindha 2*)  
   let usage   = "Usage: " ^ Sys.argv.(0) ^ " [options] filename" in
