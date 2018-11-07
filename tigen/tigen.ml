@@ -33,11 +33,12 @@ module Z3Int = Z3.Arithmetic.Integer
 module Z3Real = Z3.Arithmetic.Real
 module Z3Float = Z3.FloatingPoint
 module Z3Bool = Z3.Boolean
+module Z3Solver = Z3.Solver
 module Z3Sym = Z3.Symbol
 module Z3Expr = Z3.Expr
 module Z3Arr = Z3.Z3Array
 
-let do_debug = ref false
+let do_debug = ref true
 
 (**********************************************************************
  * Path Enumeration
@@ -432,24 +433,33 @@ let solve_constraints
   in 
   (* Much of the work here is converting from CIL Abstract Syntax Trees to
    * Z3 Abstract Syntax Trees. *) 
-  let zero_ast = Z3Int.mk_numeral_i ctx 0 in 
+  let double_sort = (Z3Float.mk_sort_double ctx) in
+  let zero_ast = Z3Float.mk_numeral_f ctx 0.0 double_sort in 
+  let zero_int_ast = Z3Int.mk_numeral_i ctx 0 in 
   let real_ast = Z3Real.mk_numeral_i ctx 0 in 
   let int_ast = Z3Int.mk_numeral_i ctx 0 in 
-  let undefined_ast = zero_ast in 
+  let undefined_ast = zero_int_ast in 
+  let rounding_mode = Z3Float.RoundingMode.mk_round_toward_zero ctx in
+ let int_sort = (Z3Int.mk_sort ctx ) in
+ let array_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
+	let rm_sort = (Z3Float.RoundingMode.mk_sort ctx) in
+  let rm = (Z3Float.mk_const ctx (Z3Sym.mk_string ctx "rm") rm_sort) in
 
-  let double_sort = (Z3Float.mk_sort_double ctx) in
 
   (* Every time we encounter the same C variable "foo" we want to map
    * it to the same Z3 node. We use a hash table to track this. *) 
   let symbol_ht = Hashtbl.create 255 in
-  let var_to_ast va_vname va_vtype va_vaddrof= 
+  let var_to_ast str = 
     try
-      Hashtbl.find symbol_ht va_vname
+      Hashtbl.find symbol_ht str
     with _ -> 
       (* Possible FIXME: currently we assume all variables are integers. *)
-	  match va_vtype with
+		  let ast = Z3Float.mk_const_s ctx str double_sort in
+		  Hashtbl.replace symbol_ht str ast ;
+		  ast
+	  (*match va_vtype with
 	  	|TInt (ikind, attributes) ->
-		  let ast = Z3Int.mk_const_s ctx va_vname in
+		  let ast = Z3Float.mk_const_s ctx va_vname double_sort in
 		  Hashtbl.replace symbol_ht va_vname ast ;
 		  ast
 	  	|TFloat (fkind, attributes) ->
@@ -469,9 +479,9 @@ let solve_constraints
 		  Hashtbl.replace symbol_ht va_vname ast ;
 		  ast
 		|_ -> 
-		  let ast = Z3Int.mk_const_s ctx va_vname in
+		  let ast = Z3Float.mk_const_s ctx va_vname double_sort in
 		  Hashtbl.replace symbol_ht va_vname ast ;
-		  ast
+		  ast*)
   in 
   (* In Z3, boolean-valued and integer-valued expressions are different
    * (i.e., have different _Sort_s). CIL does not have this issue. *) 
@@ -496,11 +506,14 @@ let solve_constraints
 	  (*The const is from the CIL documentation*)
 	  (* Possible FIXME: large numbers are not handled *) 
       (*let i = Int64.to_int32 i in *)
-      let i = Int64.to_int i in 
-      Z3Int.mk_numeral_i ctx i
+      let f = Int64.to_float i in 
+      Z3Float.mk_numeral_f ctx f double_sort
 
     | Const(CReal(r,_,_)) -> 
-      Z3Float.mk_numeral_f ctx r double_sort 
+	(*	print_float r;
+		print_endline "Inside CReal" ;
+    *)
+	Z3Float.mk_numeral_f ctx r double_sort 
 
     | Const(CStr(s)) -> 
       (* Possible FIXME: reals, enums, strings, etc., are not handled *) 
@@ -521,40 +534,46 @@ let solve_constraints
     | Const(CChr(c)) -> 
       (* Possible FIXME: characters are justed treated as integers *) 
       let cs = Char.code c in
-      Z3Int.mk_numeral_i ctx cs
+      let f = float_of_int(cs) in 
+      Z3Float.mk_numeral_f ctx f double_sort
 
     | Const(_) -> 
       (* Possible FIXME: reals, enums, strings, etc., are not handled *) 
       undefined_ast
 
-    | Lval(Var(va),NoOffset) -> var_to_ast va.vname va.vtype va.vaddrof
+    | Lval(Var(va),NoOffset) -> var_to_ast va.vname 
 (*CIL and lval*)
-    | Lval(Var(va),NoOffset) -> var_to_ast va.vname va.vtype va.vaddrof
+    | Lval(Var(va),Index(_,_)) -> undefined_ast 
     | Lval(_) -> 
       (* Possible FIXME: var.field, *p, a[i], etc., are not handled *) 
       undefined_ast
 
-    | UnOp(Neg,e,_) -> Z3.Arithmetic.mk_unary_minus ctx (exp_to_ast e) 
+    | UnOp(Neg,e,_) -> Z3Float.mk_neg ctx (exp_to_ast e) 
     | UnOp(LNot,e,_) when is_binop e -> Z3.Boolean.mk_not ctx (exp_to_ast e) 
-    | UnOp(LNot,e,_) -> Z3.Boolean.mk_eq ctx (exp_to_ast e) (zero_ast) 
+    | UnOp(LNot,e,_) -> Z3Float.mk_eq ctx (exp_to_ast e) (zero_ast) 
 
-    | BinOp(PlusA,e1,e2,_)  -> Z3.Arithmetic.mk_add ctx [ exp_to_ast e1; exp_to_ast e2]
-    | BinOp(MinusA,e1,e2,_) -> Z3.Arithmetic.mk_sub ctx [ exp_to_ast e1; exp_to_ast e2]
-    | BinOp(Mult,e1,e2,_)   -> Z3.Arithmetic.mk_mul ctx [ exp_to_ast e1; exp_to_ast e2]
+    | BinOp(PlusA,e1,e2,_)  -> Z3Float.mk_add ctx rm  (exp_to_ast e1) (exp_to_ast e2)
+    | BinOp(MinusA,e1,e2,_) -> Z3Float.mk_sub ctx rm  (exp_to_ast e1) (exp_to_ast e2)
+    | BinOp(Mult,e1,e2,_)   -> Z3Float.mk_mul ctx rm  (exp_to_ast e1) (exp_to_ast e2)
     | BinOp(Div,e1,e2,_) -> 
       let ast2 = exp_to_ast e2 in 
-      let not_div_by_zero = Z3.Boolean.mk_distinct ctx [ zero_ast ; ast2 ] in
+      let not_div_by_zero = Z3.Boolean.mk_distinct ctx [ zero_int_ast ; ast2 ] in
       constraints := not_div_by_zero :: !constraints;
-      Z3.Arithmetic.mk_div ctx (exp_to_ast e1) ast2 
-    | BinOp(Mod,e1,e2,_) -> Z3Int.mk_mod ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Lt,e1,e2,_) -> Z3.Arithmetic.mk_lt ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Le,e1,e2,_) -> Z3.Arithmetic.mk_le ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Gt,e1,e2,_) -> Z3.Arithmetic.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Ge,e1,e2,_) -> Z3.Arithmetic.mk_ge ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Eq,e1,e2,_) -> Z3.Boolean.mk_eq ctx (exp_to_ast e1) (exp_to_ast e2) 
+      Z3Float.mk_div ctx rm (exp_to_ast e1) ast2 
+    | BinOp(Mod,e1,e2,_) -> 
+	let i1 = Z3Real.mk_real2int ctx (Z3Float.mk_to_real ctx (exp_to_ast e1)) in
+	let i2 = Z3Real.mk_real2int ctx (Z3Float.mk_to_real ctx (exp_to_ast e2)) in
+	Z3Int.mk_mod ctx i1 i2 
+    | BinOp(Lt,e1,e2,_) -> Z3Float.mk_lt ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Le,e1,e2,_) -> Z3Float.mk_leq ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Gt,e1,e2,_) -> (*print_endline "Inside gr th"; let c = Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) in Printf.printf "c: %s\n" (Z3.Expr.to_string c) ;*) Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Ge,e1,e2,_) -> Z3Float.mk_geq ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Eq,e1,e2,_) -> Z3Float.mk_eq ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Ne,e1,e2,_) -> 
       Z3.Boolean.mk_distinct ctx [ (exp_to_ast e1) ; (exp_to_ast e2) ] 
-    | CastE(TFloat(_,_),e) -> begin 
+    | CastE(TFloat(_,_),e) -> exp_to_ast e
+    | CastE(_,e) -> Z3Float.mk_round_to_integral ctx rm (exp_to_ast e)
+ (*   | CastE(TFloat(_,_),e) -> begin 
 		match typeOf e with
 		|TFloat(_,_) -> (exp_to_ast e)
 		|TInt(_,_) -> Z3Float.mk_to_fp_signed ctx (Z3Int.mk_int2real ctx (exp_to_ast e) ) (Z3Int.mk_int2real ctx (exp_to_ast e) ) double_sort 	(* Possible FIXME: (int)(3.1415) ? *) 
@@ -565,10 +584,10 @@ let solve_constraints
     | CastE(TInt(_,_),e) -> begin
 		match typeOf e with
 		|TInt(_,_) -> (exp_to_ast e)
-		|TFloat(_,_) -> Z3Real.mk_real2int ctx (Z3Float.mk_to_real ctx (exp_to_ast e))
+		|TFloat(_,_) -> Z3Float.mk_round_to_integral ctx rounding_mode (exp_to_ast e)
 		|_ -> (exp_to_ast e)	 
 	end
-
+*)
     | _ -> 
       (* addrof, startof, alignof, sizeof, etc., are not handled *) 
       undefined_ast
@@ -618,13 +637,11 @@ let solve_constraints
         let solution =
           List.fold_left (fun solution formal_variable ->
             let underscore_name = "_" ^ formal_variable.vname in 
-            let underscore_type =  formal_variable.vtype in 
-            let underscore_addrof =  formal_variable.vaddrof in 
-            let z3_ast = var_to_ast underscore_name underscore_type underscore_addrof in 
+            let z3_ast = var_to_ast underscore_name in 
             try begin
               match Z3.Model.get_const_interp_e model z3_ast with
               | Some(evaluated) ->
-                let evaluated = Z3.Expr.to_string evaluated in
+                let evaluated = Z3Float.numeral_to_string evaluated in
                 if evaluated <> "" && evaluated.[0] <> '_' then
                   StringMap.add formal_variable.vname evaluated solution
                 else
@@ -685,11 +702,13 @@ let emit_test_case
   List.iter (fun formal -> 
     try 
       let value = StringMap.find formal.vname solution in 
-	  match formal.vtype with
-	  |TFloat(_,_) -> Printf.fprintf fout "\t%s = (double)%s;\n" 
-        formal.vname value
-      |_ -> Printf.fprintf fout "\t%s = %s;\n" 
-        formal.vname value 
+      let float_list = List.map float_of_string (Str.split (Str.regexp " ") value) in
+	  let aa = List.nth float_list 0 in
+	  let bb = List.nth float_list 1 in
+	  let ab = 2.0**bb in
+	  let ans = aa *. ab in
+	  Printf.fprintf fout "\t%s = %f;\n" 
+        formal.vname ans 
     with _ -> () 
   ) target_fundec.sformals ; 
 
@@ -781,37 +800,31 @@ let main () = begin
   let forty_two = Z3Float.mk_numeral_f ctx 42.0 double_sort in
   let equality_constraint = Z3Float.mk_eq ctx x_plus_y forty_two in
 
-  let solver = (Z3.Solver.mk_solver ctx None) in
-  Z3.Solver.add solver [ equality_constraint ] ;
-  if (Z3.Solver.check solver []) != Z3.Solver.SATISFIABLE then
-    Printf.printf "Test FAILED.\n"
-  else begin
-    Printf.printf "Test passed.\n" ;
-    match Z3.Solver.get_model solver with
-    | Some(model) ->
-      List.iter (fun (name,ast) ->
-        match Z3.Model.get_const_interp_e model ast with
-        | Some(evaluated) ->
-          let evaluated = Z3Float.numeral_to_string evaluated in
-          Printf.printf "\t%s = %s\n" name evaluated
-        | _ -> failwith "unexpected"
-      ) [ ("x", x) ; ("y", y) ]
-    | _ -> failwith "unexpected"
-  end ;
-  print_string "Here";
+y  print_string "Here";
 
 *******BRINDHA*)
+
+
+(* Brindha 2**
+
  (* Prove store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2
      = i3 or select(a1, i3) = select(a2, i3)) *)
 	 Z3.toggle_warning_messages true ;
 	 let ctx = Z3.mk_context [( "model", "true" )] in
+	 let double_sort = (Z3Float.mk_sort_double ctx) in
 	 let int_sort = (Z3Int.mk_sort ctx ) in
 	 let array_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
-	 let a1 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a1") int_sort int_sort in 
-	 let a2 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a2") int_sort int_sort in 
+	 let a1 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a1") double_sort double_sort in 
+	 let a2 = Z3Arr.mk_const ctx (Z3Sym.mk_string ctx "a2") double_sort double_sort in 
 
-	 let i1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i1")  in 
-	 let i2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i2")  in 
+	 let i1= (Z3Float.mk_const ctx (Z3Sym.mk_string ctx "i1") double_sort) in
+	 let v1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v1")  in 
+	 let forty_two = Z3Float.mk_numeral_f ctx 42.0 double_sort in
+	 let equality_constraint = Z3Float.mk_eq ctx i1 forty_two in
+	 let st1 = Z3Arr.mk_store ctx a1 i1 v1 in 
+	 let sel1 = Z3Arr.mk_select ctx a1 v1 in 
+	 let equality_constraint2 = Z3Float.mk_eq ctx sel1 forty_two in
+(*	 let i2 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i2")  in 
 	 let i3 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "i3")  in 
 
 	 let v1 = Z3Int.mk_const ctx (Z3Sym.mk_string ctx "v1")  in 
@@ -841,10 +854,32 @@ let main () = begin
 	(* START HERE*TODO*)
     let thm         = Z3Bool.mk_implies ctx antecedent consequent in
     printf "prove: store(a1, i1, v1) = store(a2, i2, v2) implies (i1 = i3 or i2 = i3 or select(a1, i3) = select(a2, i3))\n";
-    printf "%s\n" (Z3.ast_to_string ctx thm);
-    prove ctx thm true; 
+*)
 
-(* Brindha 2**
+let solver = (Z3.Solver.mk_solver ctx None) in
+
+  Z3.Solver.add solver [ equality_constraint2 ] ;
+
+  debug "solver: %s\n" (Z3.Solver.to_string solver);
+
+  if (Z3.Solver.check solver []) != Z3.Solver.SATISFIABLE then
+    Printf.printf "Test FAILED.\n"
+  else begin
+    Printf.printf "Test passed.\n" ;
+    match Z3.Solver.get_model solver with
+    | Some(model) ->
+      List.iter (fun (name,ast) ->
+        match Z3.Model.get_const_interp_e model ast with
+        | Some(evaluated) ->
+          let evaluated = Z3Float.numeral_to_string evaluated in
+          Printf.printf "\t%s = %s\n" name evaluated
+        | _ -> failwith "unexpected"
+      ) [ ("i1", i1) ]
+    | _ -> failwith "unexpected"
+  end ;
+  
+  
+  *** Brindha 2*)  
   let usage   = "Usage: " ^ Sys.argv.(0) ^ " [options] filename" in
   let options =
     [ "--debug", Arg.Set(do_debug), " enable Z3 debugging messages"; ]
@@ -879,7 +914,6 @@ let main () = begin
     | [] -> debug "tigen: no functions declared in %s\n" filename 
   in
   find_fundec (List.rev file.globals) ;
-  *** Brindha 2*)
 end ;;
 main () ;;
 
