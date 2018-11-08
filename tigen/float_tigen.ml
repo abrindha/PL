@@ -443,7 +443,10 @@ let solve_constraints
  let int_sort = (Z3Int.mk_sort ctx ) in
  let array_sort = (Z3Arr.mk_sort ctx int_sort int_sort) in
 	let rm_sort = (Z3Float.RoundingMode.mk_sort ctx) in
+	let rmna = (Z3Float.RoundingMode.mk_rna ctx) in
+	let rmnz = (Z3Float.RoundingMode.mk_rtz ctx) in
   let rm = (Z3Float.mk_const ctx (Z3Sym.mk_string ctx "rm") rm_sort) in
+  let epsilon = Z3Float.mk_numeral_f ctx 0.001 double_sort in
 
 
   (* Every time we encounter the same C variable "foo" we want to map
@@ -564,10 +567,20 @@ let solve_constraints
 	let i1 = Z3Real.mk_real2int ctx (Z3Float.mk_to_real ctx (exp_to_ast e1)) in
 	let i2 = Z3Real.mk_real2int ctx (Z3Float.mk_to_real ctx (exp_to_ast e2)) in
 	Z3Int.mk_mod ctx i1 i2 
-    | BinOp(Lt,e1,e2,_) -> Z3Float.mk_lt ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Le,e1,e2,_) -> Z3Float.mk_leq ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Gt,e1,e2,_) -> Z3Float.mk_gt ctx (exp_to_ast e1) (exp_to_ast e2) 
-    | BinOp(Ge,e1,e2,_) -> Z3Float.mk_geq ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Lt,e1,e2,_) -> Z3Float.mk_lt ctx (exp_to_ast e1) (Z3Float.mk_add ctx rm (exp_to_ast e2) epsilon) 
+    | BinOp(Le,e1,e2,_) -> 
+	(*	let ast1_is_not_zero =  Z3.Boolean.mk_not ctx (Z3Float.mk_is_zero ctx (exp_to_ast e1) ) in
+		let ast2_is_not_zero =  Z3.Boolean.mk_not ctx (Z3Float.mk_is_zero ctx (exp_to_ast e2) ) in
+		let asts_are_not_zero = Z3.Boolean.mk_and ctx [ast1_is_not_zero; ast2_is_not_zero] in
+		constraints := asts_are_not_zero :: !constraints;
+	*)	Z3Float.mk_leq ctx (exp_to_ast e1) (exp_to_ast e2) 
+    | BinOp(Gt,e1,e2,_) -> Z3Float.mk_gt ctx (Z3Float.mk_add ctx rm  (exp_to_ast e1) (epsilon)) (exp_to_ast e2) 
+    | BinOp(Ge,e1,e2,_) -> 
+	(*	let ast1_is_not_zero =  Z3.Boolean.mk_not ctx (Z3Float.mk_is_zero ctx (exp_to_ast e1) ) in
+		let ast2_is_not_zero =  Z3.Boolean.mk_not ctx (Z3Float.mk_is_zero ctx (exp_to_ast e2) ) in
+		let asts_are_not_zero = Z3.Boolean.mk_and ctx [ast1_is_not_zero; ast2_is_not_zero] in
+		constraints := asts_are_not_zero :: !constraints;
+	*)	Z3Float.mk_geq ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Eq,e1,e2,_) -> Z3Float.mk_eq ctx (exp_to_ast e1) (exp_to_ast e2) 
     | BinOp(Ne,e1,e2,_) -> 
       Z3.Boolean.mk_distinct ctx [ (exp_to_ast e1) ; (exp_to_ast e2) ] 
@@ -707,7 +720,7 @@ let emit_test_case
 	  let bb = List.nth float_list 1 in
 	  let ab = 2.0**bb in
 	  let ans = aa *. ab in
-	  Printf.fprintf fout "\t%s = %f;\n" 
+	  Printf.fprintf fout "\t%s = %5.5f;\n" 
         formal.vname ans 
     with _ -> () 
   ) target_fundec.sformals ; 
